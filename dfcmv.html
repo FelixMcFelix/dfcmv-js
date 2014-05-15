@@ -1,0 +1,107 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+	<head>
+	<title>CMV.js, Testing 2daMAX</title>
+	<script src="dfcmv.js"></script>
+	<script src="jszip.js"></script>
+	<script src="jszip-inflate.js"></script>
+	<script id="movierender-fs" type="x-shader/x-fragment">
+		#version 100
+		precision mediump float;
+		//Our array of 16 Colours., tile width and height.
+		//uniform vec4 colourSet[16];
+		uniform float tileDim[2];
+		uniform float viewDim[2];
+		uniform float tilesetWidth;
+		float tileWidth;
+
+		//Texture Storage.
+		uniform sampler2D frame;
+		uniform sampler2D tiles;
+		uniform sampler2D colours;
+
+		//Colour Storage
+		float foreColour;
+		float backColour;
+		vec4 pixelMask;
+
+		vec2 getCharSpaceCoord(float charNum, float internalX, float internalY){
+			//Constants.
+			float tileHeight = 12.0;
+			float tileWidth = tilesetWidth/16.0;
+
+			//Compute top left corner of the character.
+			float charX = mod(charNum, 16.0)*tileWidth;
+			float charY = floor(charNum/16.0)*tileHeight;
+
+			//Now combine.
+			float pixX = charX + internalX;
+			float pixY = charY + internalY;
+
+			//Return, invert the y pos.
+			return vec2(pixX/tilesetWidth, (pixY/192.0));
+		}
+
+		void processCoords(float tileNo, float internalX, float internalY){
+			//Convert coord system into frame-space coords, obtain the frame data.
+			float xPrime = mod(floor(tileNo/2.0), 512.0)/512.0;
+			float yPrime = floor(tileNo/1024.0)/512.0;
+			vec4 dualFrameData = texture2D(frame, vec2(xPrime, yPrime));
+			vec2 frameData;
+
+			//We must choose the correct tile.
+			if(mod(tileNo, 2.0)==0.0){
+				frameData = vec2(floor(255.0*dualFrameData.r), floor(255.0*dualFrameData.g));
+			} else{
+				frameData = vec2(floor(255.0*dualFrameData.b), floor(255.0*dualFrameData.a));
+			}
+
+			//Set colour data.
+			foreColour = mod(frameData.y, 16.0);
+			backColour = floor(frameData.y/16.0);
+
+			//Obtain character shade at this pixel.
+			pixelMask = texture2D(tiles, getCharSpaceCoord(frameData.x, internalX, internalY));
+
+		}
+
+		void main(void){
+
+			tileWidth = tilesetWidth/16.0;
+			float modifiedY = viewDim[1]-gl_FragCoord.y;
+
+			float tileNo = tileDim[1]*floor(gl_FragCoord.x/tileWidth) + floor(modifiedY/12.0);
+			float internalX = gl_FragCoord.x - (tileWidth*floor(gl_FragCoord.x/tileWidth));
+			float internalY = modifiedY - (12.0*floor(modifiedY/12.0));
+
+			processCoords(tileNo, internalX, internalY);
+
+			vec4 temp = texture2D(colours, vec2(foreColour/16.0,0.0))*pixelMask;
+			gl_FragColor = mix(texture2D(colours, vec2(backColour/16.0,0.0)), temp, temp.a);
+		}
+	</script>
+	<script id="movierender-vs" type="x-shader/x-vertex">
+		#version 100
+		attribute vec3 aVertexPosition;
+
+		void main(void){
+			gl_Position = vec4(aVertexPosition, 1.0);
+		}
+	</script>
+<!--	<script src="jszip-deflate.js"></script>
+	<script src="jszip-load.js"></script>-->
+	</head>
+	<body>
+		<canvas id="canvas"> You might wanna get another, more modern browser.</canvas>
+		<p id="boxy">
+			<input type="text" name="frameSel" />
+			<p id="totalFrames"></p>
+		</p>
+		<p id="values">
+		</p>
+		<p id="debug">
+		</p>
+		<canvas id="glcanvas"></canvas>
+	</body>
+</html>
