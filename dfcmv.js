@@ -5,8 +5,7 @@ window.onload = function() {
 	var mapOReq = new XMLHttpRequest();
 	mapOReq.open("GET", "movies/dwarf_fortress.cmv", true);
 	mapOReq.responseType = "arraybuffer";
-	var debugging = document.getElementById("debug");
-	var valueSpace = document.getElementById("values");
+
 	var beardSet = true;
 	var textures = [];
 
@@ -26,18 +25,20 @@ window.onload = function() {
 		tileOReq.src = "curses_640x300.png";
 	};
 	tileOReq.onload = function() {
-		//Iterate through, to prerender a tileset for every colour.
-		for (var i = 0; i < 16; i++) {
-			var tempcanvas = document.createElement("canvas");
-			tempcanvas.width = tileOReq.width;
-			tempcanvas.height = tileOReq.height;
-			var tempctx = tempcanvas.getContext("2d");
-			tempctx.drawImage(tileOReq, 0, 0);
-			tempctx.globalCompositeOperation = "source-atop";
-			tempctx.fillStyle = colours[i];
-			tempctx.fillRect(0, 0, tileOReq.width, tileOReq.height);
-			graphics.font.push(tempcanvas);
-		};
+		//Iterate through, to prerender a tileset for every colour if webGL is non-existant.
+		if (!glExists) {
+			for (var i = 0; i < 16; i++) {
+				var tempcanvas = document.createElement("canvas");
+				tempcanvas.width = tileOReq.width;
+				tempcanvas.height = tileOReq.height;
+				var tempctx = tempcanvas.getContext("2d");
+				tempctx.drawImage(tileOReq, 0, 0);
+				tempctx.globalCompositeOperation = "source-atop";
+				tempctx.fillStyle = colours[i];
+				tempctx.fillRect(0, 0, tileOReq.width, tileOReq.height);
+				graphics.font.push(tempcanvas);
+			};
+		}
 		loaded();
 	}
 
@@ -141,7 +142,9 @@ window.onload = function() {
 						//---------------------------------------------------------------//
 						//VERY IMPORTANT CHANGE TO FILE FORMAT FOR FUTURE IMPLEMENTATIONS//
 						//FORMAT IS NOW 0BBBIFFF, NOT 0IBBBFFF - this allows for way     //
-						//easier colour knowledge (colour is stored entirely in one byte)//
+						//easier colour lookup (each colour now single block of 4 bits). //
+						//Allows for faster lookup of colours at each instance, slight   //
+						//performance boost.                                             //
 						//---------------------------------------------------------------//
 						index2 += 2;
 						offset++;
@@ -152,15 +155,50 @@ window.onload = function() {
 		loaded();
 	};
 	mapOReq.send();
-	var canvas = document.getElementById("canvas")
-	var canvas2 = document.createElement("canvas");
+	var canvas = document.createElement("canvas"); //document.getElementById("canvas");
+	var canvas2 = document.getElementById("canvas"); //document.createElement("canvas");
 	var ctx = canvas.getContext("2d");
-	var ctx2 = canvas2.getContext("2d");
+	var ctx2;
 	var interval, tileHeight, tileWidth;
+	//var glCan = document.getElementById("glcanvas");
+	//var glCan = document.createElement("canvas");
+	var glExists = hasWebGL();
+
+	function hasWebGL() {
+		var newCan = document.createElement("canvas");
+		var gl;
+		try {
+			gl = newCan.getContext("webgl");
+		} catch (x) {
+			gl = null;
+		}
+
+		if (gl === null) {
+			try {
+				gl = newCan.getContext("experimental-webgl");
+				glExperimental = true;
+			} catch (x) {
+				gl = null;
+			}
+		}
+
+		if (gl) {
+			return true;
+		}	else {
+			return false;
+		}
+	}
 
 	function init() {
-		//Perform beard magic!
-		if (beardSet) {
+		//Create the necessary context.
+		if(glExists){
+			ctx2 = canvas2.getContext("webgl");
+		}	else{
+			ctx2 = canvas2.getContext("2d");
+		}
+
+		//Perform beard magic if there is no glCanvas!
+		if (beardSet && !glExists) {
 			var tempcanvas = document.createElement("canvas");
 			tempcanvas.width = beardOReq.width;
 			tempcanvas.height = beardOReq.height;
@@ -186,27 +224,43 @@ window.onload = function() {
 		canvas.height = movie.rows * tileHeight;
 		canvas2.width = movie.columns * tileWidth;
 		canvas2.height = movie.rows * tileHeight;
-		glCan.width = movie.columns * tileWidth;
-		glCan.height = movie.rows * tileHeight;
-		initShaders();
-		initBuffers();
-		gl.clearColor(0.0, 0.0, 0.0, 1.0);
-		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-		sendGLColours();
-		sendGLTileDims();
-		sendTileMap();
+
+		if (glExists) {
+			//debugger;
+			//glCan.width = movie.columns * tileWidth;
+			//glCan.height = movie.rows * tileHeight;
+			initShaders();
+			initBuffers();
+			ctx2.clearColor(0.0, 0.0, 0.0, 1.0);
+			ctx2.clear(ctx2.COLOR_BUFFER_BIT | ctx2.DEPTH_BUFFER_BIT);
+			sendGLColours();
+			sendGLTileDims();
+			sendTileMap();
+		}
 		interval = setInterval(update, 10 + movie.delayThing * 10);
 	}
+
+	
+
 	var index = 0;
 
 	function update() {
-		twoDCanvasRender();
-		glCanvasRender();
-		//drawScene();
+		if (glExists) {
+			glCanvasRender();
+		} else {
+			twoDCanvasRender();
+		}
+
+		//compositeUICanvas();
+
 		index++;
 	}
 
-	function twoDCanvasRender(){
+	function compositeUICanvas() {
+		ctx.drawImage(canvas2, 0, 0);
+	}
+
+	function twoDCanvasRender() {
 		if (index >= movie.frames.length) {
 
 		} else {
@@ -216,8 +270,8 @@ window.onload = function() {
 				for (var r = 0; r < movie.rows; r++) {
 					xP = i * tileWidth;
 					var yP = r * tileHeight;
-					ctx.fillStyle = colours[(movie.frames[index].data[index2 + 1]) >> 4];
-					ctx.fillRect(xP, yP, tileWidth, tileHeight);
+					ctx2.fillStyle = colours[(movie.frames[index].data[index2 + 1]) >> 4];
+					ctx2.fillRect(xP, yP, tileWidth, tileHeight);
 					//FORMAT: context.drawImage(imageObj, sourceX, sourceY, sourceWidth, sourceHeight, destX, destY, destWidth, destHeight);
 					var sX = (movie.frames[index].data[index2] % 16) * tileWidth;
 					var sY = (movie.frames[index].data[index2] >> 4) * tileHeight;
@@ -225,38 +279,34 @@ window.onload = function() {
 					index2 += 2;
 				};
 			};
-			ctx.drawImage(canvas2, 0, 0);
+			//ctx.drawImage(canvas2, 0, 0);
 		};
 	}
 
 	function glCanvasRender() {
-		if (index >= movie.frames.length) {
-		}	else{
-			generateFrameDataTex(gl, movie.frames[index]);
+		if (index >= movie.frames.length) {} else {
+			generateFrameDataTex(ctx2, movie.frames[index]);
 			drawScene();
 		}
 	}
 
-	var glCan = document.getElementById("glcanvas");
-	var gl = glCan.getContext("webgl");
-
 	function initShaders() {
-		var fragmentshader = getShader(gl, "movierender-fs");
-		var vertexShader = getShader(gl, "movierender-vs");
+		var fragmentshader = getShader(ctx2, "movierender-fs");
+		var vertexShader = getShader(ctx2, "movierender-vs");
 
 		//
 
-		shaderProg = gl.createProgram();
-		gl.attachShader(shaderProg, vertexShader);
-		gl.attachShader(shaderProg, fragmentshader);
-		gl.linkProgram(shaderProg);
+		shaderProg = ctx2.createProgram();
+		ctx2.attachShader(shaderProg, vertexShader);
+		ctx2.attachShader(shaderProg, fragmentshader);
+		ctx2.linkProgram(shaderProg);
 
 		//
 
-		gl.useProgram(shaderProg);
+		ctx2.useProgram(shaderProg);
 
-		vertexPositionAttribute = gl.getAttribLocation(shaderProg, "aVertexPosition");
-		gl.enableVertexAttribArray(vertexPositionAttribute);
+		vertexPositionAttribute = ctx2.getAttribLocation(shaderProg, "aVertexPosition");
+		ctx2.enableVertexAttribArray(vertexPositionAttribute);
 
 	}
 
@@ -296,90 +346,92 @@ window.onload = function() {
 		}
 
 		return shader;
+
 	}
 
+
 	function initBuffers() {
-		squareVerticesBuffer = gl.createBuffer();
-		gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
+		squareVerticesBuffer = ctx2.createBuffer();
+		ctx2.bindBuffer(ctx2.ARRAY_BUFFER, squareVerticesBuffer);
 
 		var vertices = [
 			1.0, 1.0, 0.0, -1.0, 1.0, 0.0,
 			1.0, -1.0, 0.0, -1.0, -1.0, 0.0
 		];
 
-		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+		ctx2.bufferData(ctx2.ARRAY_BUFFER, new Float32Array(vertices), ctx2.STATIC_DRAW);
 	}
 
 	function drawScene() {
 		screenMatch();
-		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+		ctx2.clear(ctx2.COLOR_BUFFER_BIT | ctx2.DEPTH_BUFFER_BIT);
 
-		gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
-		gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+		ctx2.bindBuffer(ctx2.ARRAY_BUFFER, squareVerticesBuffer);
+		ctx2.vertexAttribPointer(vertexPositionAttribute, 3, ctx2.FLOAT, false, 0, 0);
 
-		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, textures[0]);
-		gl.uniform1i(gl.getUniformLocation(shaderProg, "frame"), 0);
+		ctx2.activeTexture(ctx2.TEXTURE0);
+		ctx2.bindTexture(ctx2.TEXTURE_2D, textures[0]);
+		ctx2.uniform1i(ctx2.getUniformLocation(shaderProg, "frame"), 0);
 
-		gl.activeTexture(gl.TEXTURE1);
-		gl.bindTexture(gl.TEXTURE_2D, textures[1]);
-		gl.uniform1i(gl.getUniformLocation(shaderProg, "tiles"), 1);
+		ctx2.activeTexture(ctx2.TEXTURE1);
+		ctx2.bindTexture(ctx2.TEXTURE_2D, textures[1]);
+		ctx2.uniform1i(ctx2.getUniformLocation(shaderProg, "tiles"), 1);
 
-		gl.activeTexture(gl.TEXTURE2);
-		gl.bindTexture(gl.TEXTURE_2D, textures[2]);
-		gl.uniform1i(gl.getUniformLocation(shaderProg, "colours"), 2);
+		ctx2.activeTexture(ctx2.TEXTURE2);
+		ctx2.bindTexture(ctx2.TEXTURE_2D, textures[2]);
+		ctx2.uniform1i(ctx2.getUniformLocation(shaderProg, "colours"), 2);
 
-		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		ctx2.drawArrays(ctx2.TRIANGLE_STRIP, 0, 4);
 	}
 
 	function screenMatch() {
-		if (gl.viewportWidth != glCan.width || gl.viewportHeight != glCan.height) {
-			gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+		if (ctx2.viewportWidth != canvas2.width || ctx2.viewportHeight != canvas2.height) {
+			ctx2.viewport(0, 0, ctx2.canvas.width, ctx2.canvas.height);
 		}
-		gl.viewportWidth = glCan.width;
-		gl.viewportHeight = glCan.height;
+		ctx2.viewportWidth = canvas2.width;
+		ctx2.viewportHeight = canvas2.height;
 	}
 
 	function sendGLColours() {
-		var texan = new Uint8Array(4*colours.length);
+		var texan = new Uint8Array(4 * colours.length);
 		for (var i = 0; i < colours.length; i++) {
 			var temp = colours[i].substr(1, 6);
 			var arr = new Uint8Array([0, 0, 0, 0xff]);
 			for (var j = 0; j < 3; j++) {
 				arr[j] = parseInt("0x" + temp.substr(2 * j, 2));
 			}
-			texan.set(arr, 4*i)
+			texan.set(arr, 4 * i)
 		}
-		var texture = gl.createTexture();
-		gl.bindTexture(gl.TEXTURE_2D, texture);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, colours.length, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, texan); //Store frame data as a 512 by 512 texture, no one should need a file that large. I hope.
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-		
+		var texture = ctx2.createTexture();
+		ctx2.bindTexture(ctx2.TEXTURE_2D, texture);
+		ctx2.texImage2D(ctx2.TEXTURE_2D, 0, ctx2.RGBA, colours.length, 1, 0, ctx2.RGBA, ctx2.UNSIGNED_BYTE, texan); //Store frame data as a 512 by 512 texture, no one should need a file that large. I hope.
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_WRAP_S, ctx2.CLAMP_TO_EDGE);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_WRAP_T, ctx2.CLAMP_TO_EDGE);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_MIN_FILTER, ctx2.NEAREST);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_MAG_FILTER, ctx2.NEAREST);
+
 		textures[2] = texture;
 	}
 
 	function sendGLTileDims() {
-		gl.uniform1f(gl.getUniformLocation(shaderProg, "tileDim[0]"), movie.columns);
-		gl.uniform1f(gl.getUniformLocation(shaderProg, "tileDim[1]"), movie.rows);
-		gl.uniform1f(gl.getUniformLocation(shaderProg, "viewDim[0]"), glCan.width);
-		gl.uniform1f(gl.getUniformLocation(shaderProg, "viewDim[1]"), glCan.height);
-		gl.uniform1f(gl.getUniformLocation(shaderProg, "tilesetWidth"), tileOReq.width);
+		ctx2.uniform1f(ctx2.getUniformLocation(shaderProg, "tileDim[0]"), movie.columns);
+		ctx2.uniform1f(ctx2.getUniformLocation(shaderProg, "tileDim[1]"), movie.rows);
+		ctx2.uniform1f(ctx2.getUniformLocation(shaderProg, "viewDim[0]"), canvas2.width);
+		ctx2.uniform1f(ctx2.getUniformLocation(shaderProg, "viewDim[1]"), canvas2.height);
+		ctx2.uniform1f(ctx2.getUniformLocation(shaderProg, "tilesetWidth"), tileOReq.width);
 	}
 
 	function sendTileMap() {
-		var texture = gl.createTexture();
-		gl.bindTexture(gl.TEXTURE_2D, texture);
+		var texture = ctx2.createTexture();
+		ctx2.bindTexture(ctx2.TEXTURE_2D, texture);
 
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tileOReq);
+		ctx2.texImage2D(ctx2.TEXTURE_2D, 0, ctx2.RGBA, ctx2.RGBA, ctx2.UNSIGNED_BYTE, tileOReq);
 
 		// Set the parameters so we can render any size image.
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_WRAP_S, ctx2.CLAMP_TO_EDGE);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_WRAP_T, ctx2.CLAMP_TO_EDGE);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_MIN_FILTER, ctx2.NEAREST);
+		ctx2.texParameteri(ctx2.TEXTURE_2D, ctx2.TEXTURE_MAG_FILTER, ctx2.NEAREST);
 
 		textures[1] = texture;
 	}
@@ -391,7 +443,7 @@ window.onload = function() {
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankUint); //Store frame data as a 512 by 512 texture, no one should need a file that large. I hope.
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); //gl.NEAREST is also allowed, instead of gl.LINEAR, as neither mipmap.
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); //gl.NEAREST is also allowed, instead of gl.LINEAR, as neither mipmap.
-		
+
 		textures[0] = texture;
 	}
 
